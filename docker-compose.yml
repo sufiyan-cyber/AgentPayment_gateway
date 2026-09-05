@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # 1. PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: mandatesentinel-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mandatesentinel
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel_password_123
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d mandatesentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis State & Velocity Counter
+  redis:
+    image: redis:7-alpine
+    container_name: mandatesentinel-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 3. MandateSentinel FastAPI Core (<300ms Trust Gate)
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mandatesentinel-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://sentinel:sentinel_password_123@postgres:5432/mandatesentinel
+      - REDIS_URL=redis://redis:6379/0
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID:-rzp_test_mandate_sentinel_mock}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET:-mock_secret_key_12345}
+      - RAZORPAY_MOCK_MODE=${RAZORPAY_MOCK_MODE:-true}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - T_STEPUP=0.45
+      - T_BLOCK=0.70
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # 4. React Vite Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mandatesentinel-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
